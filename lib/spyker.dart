@@ -14,8 +14,10 @@ enum SpykerStatus {
 class Spyker extends PositionBodyComponent {
   late Paint originalPaint;
   final Vector2 _position;
+  final double _angle;
   late Fixture spikeFixture;
   late Fixture powerFixture;
+  double score = 0;
   bool hasCollided = false;
   Vector2 collisionPosition = Vector2.zero();
   Vector2 collisionVelocity = Vector2.zero();
@@ -23,6 +25,12 @@ class Spyker extends PositionBodyComponent {
   double heat = 0;
   double lp = 0;
   double rp = 0;
+  double angleToCenter = 0;
+  double angleToEnemy = 0;
+  double distanceToEnemy = 0;
+  double angleFromEnemy = 0;
+  double distanceToEdge = 0;
+  bool spiked = false;
 
   double get leftPower {
     return lp;
@@ -72,7 +80,7 @@ class Spyker extends PositionBodyComponent {
     return impulse;
   }
 
-  Spyker(this._position) : super(size:Vector2(0,1)) {
+  Spyker(this._position, [this._angle = 0]) : super(size:Vector2(0,1)) {
     debugMode = true;
     positionComponent = PositionComponent();
     //positionComponent!.changeParent(this);
@@ -107,6 +115,7 @@ class Spyker extends PositionBodyComponent {
       ..angularDamping = 3
       ..linearDamping = 0.95
       ..position = _position
+      ..angle = _angle
       ..type = BodyType.dynamic;
 
     var body = world.createBody(bodyDef);
@@ -115,8 +124,8 @@ class Spyker extends PositionBodyComponent {
       ..set(
         [
           Vector2( 0.00, 1.75),
-          Vector2( 0.75, 0.75),
-          Vector2(-0.75, 0.75),
+          Vector2( 0.50, 0.75),
+          Vector2(-0.50, 0.75),
         ]
       );
 
@@ -130,28 +139,29 @@ class Spyker extends PositionBodyComponent {
     final bodyShape = PolygonShape()
       ..set(
         [
-          Vector2( 1.0, 1.0),
-          Vector2( 1.0,-1.0),
-          Vector2(-1.0,-1.0),
-          Vector2(-1.0, 1.0),
+          Vector2( 0.5, 0.8),
+          Vector2( 0.5,-0.8),
+          Vector2(-0.5,-0.8),
+          Vector2(-0.5, 0.8),
         ]
       );
 
     final bodyFixtureDef = FixtureDef(bodyShape)
-      ..restitution = 0.8
+      ..restitution = 0.9
       ..density = 1.0
-      ..friction = 0.8;
+      ..friction = 0.5;
 
     body.createFixture(bodyFixtureDef);
 
     final powerShape = PolygonShape()
       ..set(
         [
-          Vector2( 0.75,-0.75),
+          Vector2( 0.50,-0.75),
           Vector2( 0.50,-1.50),
           Vector2( 0.00,-1.66),
           Vector2(-0.50,-1.50),
-          Vector2(-0.75,-0.75),
+          Vector2(-0.50,-0.75),
+          Vector2(-0.50,-0.75),
         ]
       );
 
@@ -216,8 +226,10 @@ class SpykerContactCallback extends ContactCallback<Spyker, Spyker> {
     if (a.isCollidable(contact.fixtureA) && b.isCollidable(contact.fixtureB)) {
       if (a.isSpike(contact.fixtureA) && b.isPower(contact.fixtureB)) {
         b.status = SpykerStatus.died;
+        a.spiked = true;
       } else if (b.isSpike(contact.fixtureB) && a.isPower(contact.fixtureA)) {
         a.status = SpykerStatus.died;
+        b.spiked = true;
       }
     }
   }
