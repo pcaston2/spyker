@@ -1,7 +1,8 @@
-import 'dart:collection';
+
 import 'dart:convert';
 import 'dart:math';
 import 'dart:io';
+import 'package:flutter_rating_bar/flutter_rating_bar.dart';
 import 'package:neated/connection.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flame/components.dart';
@@ -33,15 +34,13 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
     final double arenaRadius = 50.0;
     double gameOverTime = 0;
     late NeuralNet net;
-    List<Genome> genomes = <Genome>[];
+    late Genome genome;
     int currentGenomeIndex = 0;
     int generation = 0;
     int cycleIndex = 0;
     List<num> inputs = <num>[];
     List<num> outputs = <num>[];
     late File netFile;
-    Queue<Genome> tournament = Queue<Genome>();
-    Queue<Genome> nextRound = Queue<Genome>();
 
     Spyker getEnemy(Spyker s) {
       if (spykers.first == s) {
@@ -55,7 +54,7 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
     @override
     Future<void> onLoad() async {
       var options = NeuralNetOptions();
-      options.sizeOfGeneration = 16;
+      options.sizeOfGeneration = 20;
       final directory = await getApplicationDocumentsDirectory();
       final file = "${directory.path}/spyker.net";
       netFile = File(file);
@@ -71,9 +70,6 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
       //fittest = Genome.clone(net.fittest);
       //current = currentGenome;
       camera.speed = 1;
-      setup();
-
-      addContactCallback(SpykerContactCallback());
 
 
       final knobColor = Paint()
@@ -107,9 +103,9 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
           paint: backgroundColor,
         ),
         margin: const EdgeInsets.only(left: 50, bottom: 50),
+        priority: 1,
       );
       leftJoystick.positionType = PositionType.widget;
-      add(leftJoystick);
 
       rightJoystick = VerticalJoystickComponent(
         knob: CircleComponent(
@@ -121,10 +117,19 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
           paint: backgroundColor,
         ),
         margin: const EdgeInsets.only(right: 50, bottom: 50),
+        priority: 1,
       );
 
       rightJoystick.positionType = PositionType.widget;
+
+      add(leftJoystick);
       add(rightJoystick);
+
+      setup();
+
+      addContactCallback(SpykerContactCallback());
+
+
 
       super.onLoad();
     }
@@ -141,24 +146,19 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
         add(s);
       }
 
-      if (tournament.isEmpty) {
-        if (nextRound.length <= 1) {
-          print("End of round!");
-          nextRound.clear();
-          net.createNextGeneration();
-          netFile.writeAsString(jsonEncode(net.toJson()), flush: true);
-          nextRound.addAll(net.currentGeneration);
-          nextRound.forEach((g) => g.fitness = 0);
+      bool doNextGeneration = net.currentGeneration.every((g) => g.fitness > 0);
+      //print (doNextGeneration);
+      if (doNextGeneration) {
+        net.createNextGeneration();
+        for (var g in net.currentGeneration) {
+          g.fitness = 0;
         }
-        print("Next round!");
-        tournament = nextRound;
-        nextRound = Queue<Genome>();
-        print("Tournament size: ${tournament.length}");
       }
-      print("Contenders remaining: ${tournament.length}");
-      genomes.clear();
-      genomes.add(tournament.removeFirst());
-      genomes.add(tournament.removeFirst());
+      //print(net.currentGeneration.where((g) => g.fitness == 0).length);
+      genome = net.currentGeneration.firstWhere((g) => g.fitness == 0);
+
+      netFile.writeAsString(jsonEncode(net.toJson()), flush: true);
+
       camera.followComponent(follow.positionComponent!);
       camera.zoom = 6.0;
       addContactCallback(SpykerContactCallback());
@@ -173,27 +173,12 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
       }
       remove(arena);
 
-      if (spykers.any((s) => s.score == 0)) {
-        throw new Exception("Someone didn't get scored");
-      }
-      var winnerIndex = spykers[0].score >= spykers[1].score ? 0 : 1;
-      //print("Winner Fitness: ${spykers[winnerIndex].score}");
-      var winner = genomes[winnerIndex];
-      winner.fitness++;
-      for (int i = 0; i < 2; i++) {
-        print("Genome Score #$i: ${spykers[i].score}");
-        print("Fitness Score #$i: ${genomes[i].fitness}");
-      }
-      nextRound.add(winner);
+      genome.fitness = spykers[1].score;
 
       gameOver = false;
       scored = false;
       gameOverTime = 0;
 
-      for (int i = 0;i<genomes.length; i++) {
-        //genomes[i].fitness += spykers[i].score;
-        print("Scores: ${genomes[i].fitness}");
-      }
       spykers.clear();
       //advanceGenome();
     }
@@ -235,8 +220,7 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
     }
 
     @override
-    void update(double dt) {
-      dt *= 5;
+    Future<void> update(double dt) async {
       // var v = Vector2(3,4);
       // var u = Vector2(5,-12);
       // var dot = u.dot(v);
@@ -260,11 +244,8 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
       }
 
 
-      loadNetwork(genomes[0], spykers[0]);
-      advanceNetwork(genomes[0], spykers[0]);
-
-      inputs = loadNetwork(genomes[1], spykers[1]);
-      outputs = advanceNetwork(genomes[1], spykers[1]);
+      inputs = loadNetwork(genome, spykers[1]);
+      outputs = advanceNetwork(genome, spykers[1]);
 
 
 
@@ -350,7 +331,7 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
 
       //double turn = -delta.x;
         var heating = (s.leftPower.abs() + s.rightPower.abs()) *
-            0.15 * dt;
+            0.2 * dt;
         var cooling = 1 - heating;
         s.heat += heating;
         s.heat -= cooling * 0.0015;
@@ -438,6 +419,40 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
         }
         gameOverTime += dt;
         if (gameOverTime > 3.0) {
+          paused = true;
+          double initialRating = (spykers[1].score * 10).clamp(0.5,10).round()/2;
+          var starRating = await showDialog<double>(
+              barrierDismissible: false,
+              barrierColor: Colors.black26,
+              context: context,
+              builder: (BuildContext context) => AlertDialog(
+                title: const Text('Rate your opponent'),
+                content: const Text('Those with the best ratings will be promoted'),
+                actions: <Widget>[
+                  RatingBar.builder(
+                  initialRating: initialRating,
+                    minRating: 0.5,
+                    direction: Axis.horizontal,
+                    allowHalfRating: true,
+                    itemCount: 5,
+                    itemPadding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    itemBuilder: (context, _) => const Icon(
+                      Icons.star,
+                      color: Colors.amber,
+                    ),
+                    onRatingUpdate: (rating) {
+                      Navigator.pop(context, rating);
+                    },
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, 0.0),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              )
+          );
+          spykers[1].score = starRating!;
+          paused = false;
           reset();
           setup();
         }
@@ -455,50 +470,48 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
     }
 
     @override
-    void render(Canvas c) {
-      super.render(c);
-      final foreground = Paint()..color = Colors.white;
-      final background = Paint()..color = Colors.grey;
+    void render(Canvas canvas) {
+      super.render(canvas);
+      final foreground = Paint()..color = Colors.white.withOpacity(0.75);
+      final background = Paint()..color = Colors.grey.withOpacity(0.75);
 
       var index = 0;
       for(var val in inputs) {
-        var offset = Offset(50+index*60,100);
-        var radius = 25.0;
-        c.drawCircle(offset, radius, background);
+        var offset = Offset(100+index*30,20);
+        var radius = 10.0;
+        canvas.drawCircle(offset, radius, background);
         if (index <3) {
-          c.drawArc(Rect.fromCenter(center: offset, width: radius*2, height: radius*2), -(pi / 2) - (pi / 20) + (pi*.75) * val, pi / 10, true, foreground);
+          canvas.drawArc(Rect.fromCenter(center: offset, width: radius*2, height: radius*2), -(pi / 2) - (pi / 20) + (pi*.75) * val, pi / 10, true, foreground);
         } else {
-          c.drawArc(Rect.fromCenter(center: offset, width: radius*2, height: radius*2), -(pi / 2) - (pi*.75), pi * 2 * .75 * val, true, foreground);
+          canvas.drawArc(Rect.fromCenter(center: offset, width: radius*2, height: radius*2), -(pi / 2) - (pi*.75), pi * 2 * .75 * val, true, foreground);
         }
-        TextSpan span = new TextSpan(style: new TextStyle(color: Colors.black), text: val.toStringAsFixed(2));
-        TextPainter tp = new TextPainter(text: span, textAlign: TextAlign.center, textDirection: TextDirection.ltr);
-        tp.layout();
-        tp.paint(c, new Offset(offset.dx-13, offset.dy+4));
+        //TextSpan span = TextSpan(style: const TextStyle(color: Colors.black), text: val.toStringAsFixed(2));
+        //TextPainter tp = TextPainter(text: span, textAlign: TextAlign.center, textDirection: TextDirection.ltr);
+        //tp.layout();
+        //tp.paint(canvas, Offset(offset.dx-13, offset.dy+4));
         index++;
       }
 
       index = 0;
       for(var val in outputs) {
-        var offset = Offset(50+index*60,175);
-        var radius = 25.0;
-        c.drawCircle(offset, radius, background);
-        c.drawArc(Rect.fromCenter(center: offset, width: radius*2, height: radius*2), -(pi / 2) - (pi / 20) + (pi*.75) * val, pi / 10, true, foreground);
+        var offset = Offset(100+index*30,50);
+        var radius = 10.0;
+        canvas.drawCircle(offset, radius, background);
+        canvas.drawArc(Rect.fromCenter(center: offset, width: radius*2, height: radius*2), -(pi / 2) - (pi / 20) + (pi*.75) * val, pi / 10, true, foreground);
 
 
-        TextSpan span = new TextSpan(style: new TextStyle(color: Colors.black), text: val.toStringAsFixed(2));
-        TextPainter tp = new TextPainter(text: span, textAlign: TextAlign.center, textDirection: TextDirection.ltr);
-        tp.layout();
-        tp.paint(c, new Offset(offset.dx-13, offset.dy+4));
+        //TextSpan span = TextSpan(style: const TextStyle(color: Colors.black), text: val.toStringAsFixed(2));
+        //TextPainter tp = TextPainter(text: span, textAlign: TextAlign.center, textDirection: TextDirection.ltr);
+        //tp.layout();
+        //tp.paint(canvas, Offset(offset.dx-13, offset.dy+4));
         index++;
       }
 
-      final genomeBackground = Paint()..color = Colors.blueGrey.shade50;
-      var offset = Offset(50,300);
-      var scale = 100.0;
-      int gOffset = 0;
-      for (var g in genomes) {
-        c.drawRect(Rect.fromLTWH(offset.dx-20 + gOffset, offset.dy-20, scale+40, scale+40), genomeBackground);
-        for (var link in g.connections) {
+      final genomeBackground = Paint()..color = Colors.blueGrey.withOpacity(0.75);
+      var offset = const Offset(10,10);
+      var scale = 50.0;
+        canvas.drawRect(Rect.fromLTWH(offset.dx-5, offset.dy-5, scale+10, scale+10), genomeBackground);
+        for (var link in genome.connections) {
           if (!link.enabled) {
             continue;
           }
@@ -507,28 +520,29 @@ class SpykerGame extends Forge2DGame with HasDraggables, KeyboardEvents {
           var connection = Paint()
             ..color = color!
             ..style = PaintingStyle.fill;
+          var recurrent = Paint()
+            ..color = color
+            ..style = PaintingStyle.stroke;
           if (link is Loop) {
-            c.drawCircle(
-                offset + Offset(link.from.x * scale + gOffset, link.from.y * scale), 6,
-                connection);
+            canvas.drawCircle(
+                offset + Offset(link.from.x * scale, link.from.y * scale), 6,
+                recurrent);
           } else {
-            c.drawLine(
-                offset + Offset(link.from.x * scale + gOffset, link.from.y * scale),
-                offset + Offset(link.to.x * scale + gOffset, link.to.y * scale),
+            canvas.drawLine(
+                offset + Offset(link.from.x * scale, link.from.y * scale),
+                offset + Offset(link.to.x * scale, link.to.y * scale),
                 connection);
           }
         }
-        for (var n in g.nodes) {
+        for (var n in genome.nodes) {
           var colorTransition = (Activation.tanh(n.output) + 1) / 2;
           var color = Color.lerp(Colors.green, Colors.red, colorTransition);
           var node = Paint()
             ..color = color!;
-          c.drawRect(Rect.fromCircle(
-              center: offset + Offset(n.x * scale + gOffset, n.y * scale), radius: 2),
+          canvas.drawRect(Rect.fromCircle(
+              center: offset + Offset(n.x * scale, n.y * scale), radius: 2),
               node);
         }
-        gOffset = gOffset + 150;
-      }
     }
 
     @override

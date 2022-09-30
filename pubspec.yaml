@@ -31,6 +31,7 @@ dependencies:
   flame_forge2d: ^0.8.2-releasecandidate.15
   neated: ^1.0.0
   path_provider: ^2.0.11
+  flutter_rating_bar: ^4.0.1
   flutter:
     sdk: flutter
 
